@@ -1,8 +1,8 @@
-// Remote Python backend address over local WiFi
-export const API_BASE_URL = "http://172.17.211.69:8000";
-export const API_URL = "http://172.17.211.69:8000/api/assess";
+// Local Python backend address on port 8000
+export const API_BASE_URL = "http://localhost:8000";
+export const API_URL = "http://localhost:8000/api/assess";
 
-// Switch between simulated mock mode and remote live backend
+// Switch between simulated mock mode and live backend
 export const USE_MOCK = false;
 
 export const MOCK_AGENT_LOGS = [
@@ -102,16 +102,26 @@ export const MOCK_ASSESSMENT_RESULT = {
 /**
  * Submit assessment to Python backend POST /api/assess
  */
-export async function submitAssessment({ farmerName, polygon, documentUrls }) {
+export async function submitAssessment({
+  farmerName,
+  polygon,
+  documentUrls,
+  area_ha,
+  area_hectares,
+  lat: customLat,
+  lon: customLon,
+}) {
   if (USE_MOCK) {
     return { assessment_id: "mh-aur-4122-uuid" };
   }
 
   const firstPt = polygon && polygon.length > 0 ? polygon[0] : [75.3432, 19.8835];
-  const lon = Number(firstPt[0]);
-  const lat = Number(firstPt[1]);
+  const lon = customLon !== undefined ? Number(customLon) : Number(firstPt[0]);
+  const lat = customLat !== undefined ? Number(customLat) : Number(firstPt[1]);
+  const parsedArea = area_ha !== undefined ? Number(area_ha) : (area_hectares !== undefined ? Number(area_hectares) : 1.62);
 
   const payload = {
+    assessment_id: window.currentAssessmentId || `assess_${Date.now()}`,
     farmer_name: farmerName || "Ramesh G. Patil",
     plot_geojson: {
       type: "Polygon",
@@ -119,19 +129,36 @@ export async function submitAssessment({ farmerName, polygon, documentUrls }) {
     },
     lat: lat,
     lon: lon,
-    area_hectares: 1.62,
+    area_ha: parsedArea,
+    area_hectares: parsedArea,
+    irrigation: window.selectedIrrigation || "canal",
     irrigation_type: "Canal",
-    doc_path: documentUrls?.[0] || "7_12_Extract_Gut_142_Aurangabad.pdf",
+    doc_path: documentUrls?.[0] || window.uploadedDocPath || "7_12_Extract_Gut_142_Aurangabad.pdf",
   };
 
-  const response = await fetch(API_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
+  console.log("Triggering agents with payload:", payload);
+
+  let response;
+  try {
+    response = await fetch(API_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!response.ok && (response.status === 404 || response.status === 405)) {
+      throw new Error(`Primary endpoint returned ${response.status}`);
+    }
+  } catch (assessErr) {
+    console.log("[API] /api/assess fallback to /api/assessments/trigger:", assessErr.message);
+    response = await fetch(`${API_BASE_URL}/api/assessments/trigger`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+  }
 
   if (!response.ok) {
-    throw new Error(`Failed to submit assessment to ${API_URL}: ${response.statusText}`);
+    throw new Error(`Failed to submit assessment: ${response.statusText}`);
   }
 
   return await response.json();
