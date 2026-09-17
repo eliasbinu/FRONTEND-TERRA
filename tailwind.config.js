@@ -8,23 +8,23 @@ export default {
   theme: {
     extend: {
       colors: {
-        canvas: '#090d16',
-        panel: '#0f172a',
+        canvas: '#000000',
+        panel: '#0a0f0d',
         border: {
-          DEFAULT: '#1e293b',
-          dark: '#1e293b',
+          DEFAULT: '#19261c',
+          dark: '#19261c',
         },
         risk: {
-          emerald: '#10b981',
+          emerald: '#22c55e',
           amber: '#f59e0b',
           rose: '#f43f5e',
-          sky: '#38bdf8',
+          sky: '#22c55e',
         },
         status: {
-          pass: '#10b981',
+          pass: '#22c55e',
           review: '#f59e0b',
           mismatch: '#f43f5e',
-          telemetry: '#38bdf8',
+          telemetry: '#22c55e',
         },
       },
       borderRadius: {

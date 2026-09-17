@@ -9,7 +9,6 @@ import {
   Loader2,
   FileCheck,
   ArrowRight,
-  Sparkles,
   CheckCircle2,
   AlertCircle,
 } from 'lucide-react';
@@ -24,12 +23,20 @@ L.Icon.Default.mergeOptions({
 
 // Ensure L and L.Draw are globally synced
 if (typeof window !== 'undefined') {
+  window.type = '';
   window.L = L;
   if (window.L && window.L.Draw && !L.Draw) {
     L.Draw = window.L.Draw;
   }
   if (window.L && window.L.Control?.Draw && !L.Control?.Draw) {
     L.Control.Draw = window.L.Control.Draw;
+  }
+  if (window.L?.GeometryUtil?.readableArea) {
+    const orig = window.L.GeometryUtil.readableArea;
+    window.L.GeometryUtil.readableArea = function (area, isMetric, precision) {
+      window.type = typeof isMetric;
+      return orig.apply(this, arguments);
+    };
   }
 }
 
@@ -88,6 +95,13 @@ function DrawEditControl({ onCreated, onEdited, onDeleted, featureGroupRef }) {
       map.addLayer(drawnItems);
     }
 
+    // Configure clear instructions so the user knows they can place unlimited vertices
+    if (LeafletLib.drawLocal?.draw?.handlers?.polygon?.tooltip) {
+      LeafletLib.drawLocal.draw.handlers.polygon.tooltip.start = 'Click map to place 1st corner of parcel.';
+      LeafletLib.drawLocal.draw.handlers.polygon.tooltip.cont = 'Click map to place next vertex (add 4+ vertices freely).';
+      LeafletLib.drawLocal.draw.handlers.polygon.tooltip.end = 'Click 1st point, double-click, or click Finish to complete parcel.';
+    }
+
     const drawControl = new LeafletLib.Control.Draw({
       position: 'topright',
       draw: {
@@ -97,11 +111,11 @@ function DrawEditControl({ onCreated, onEdited, onDeleted, featureGroupRef }) {
         circlemarker: false,
         marker: false,
         polygon: {
-          allowIntersection: false,
-          showArea: true,
+          allowIntersection: true,
+          showArea: false,
           shapeOptions: {
-            color: '#10b981',
-            fillColor: '#10b981',
+            color: '#22c55e',
+            fillColor: '#22c55e',
             fillOpacity: 0.35,
             weight: 2,
           },
@@ -116,6 +130,7 @@ function DrawEditControl({ onCreated, onEdited, onDeleted, featureGroupRef }) {
     map.addControl(drawControl);
 
     const handleCreated = (e) => {
+      drawnItems.clearLayers();
       drawnItems.addLayer(e.layer);
       if (onCreated) onCreated(e);
     };
@@ -148,7 +163,7 @@ function DrawEditControl({ onCreated, onEdited, onDeleted, featureGroupRef }) {
   return null;
 }
 
-export default function PlotDrawMap({ onCompleteSubmit }) {
+export default function PlotDrawMap({ onCompleteSubmit, initialQuery }) {
   const [activeLayer, setActiveLayer] = useState('satellite'); // Default to satellite view
   const [farmerName, setFarmerName] = useState('');
   const [polygonCoords, setPolygonCoords] = useState(null);
@@ -165,6 +180,31 @@ export default function PlotDrawMap({ onCompleteSubmit }) {
   const [pincodeMarker, setPincodeMarker] = useState(null);
 
   const featureGroupRef = useRef(null);
+
+  // Apply initial query from landing page if provided
+  useEffect(() => {
+    if (!initialQuery) return;
+    const clean = initialQuery.trim();
+    if (/^\d{6}$/.test(clean) || clean.startsWith('PIN ')) {
+      const pin = clean.replace('PIN ', '');
+      setPincodeInput(pin);
+      if (PIN_CACHE[pin]) {
+        const target = PIN_CACHE[pin];
+        setMapCenter([target.lat, target.lng]);
+        setPincodeMarker([target.lat, target.lng]);
+        setPincodeInfo(target.name);
+      }
+    } else if (clean.toLowerCase().includes('aurangabad') || clean.toLowerCase().includes('pilot')) {
+      handleLoadPilotPreset();
+    } else if (clean.length > 0 && clean !== 'Cadastral Inspection') {
+      setFarmerName(clean);
+    }
+  }, [initialQuery]);
+
+  const calculatedAreaHa =
+    polygonCoords && polygonCoords.length >= 3 && (window.L || L)?.GeometryUtil?.geodesicArea
+      ? ((window.L || L).GeometryUtil.geodesicArea(polygonCoords.map(([lat, lng]) => (window.L || L).latLng(lat, lng))) / 10000).toFixed(2)
+      : '1.62';
 
   const tileLayers = {
     satellite: {
@@ -292,12 +332,12 @@ export default function PlotDrawMap({ onCompleteSubmit }) {
     e.preventDefault();
 
     if (!farmerName.trim()) {
-      setErrorMsg('Farmer name is required. Click "Load Aurangabad Pilot" or enter name.');
+      setErrorMsg('Farmer name is required. Please enter a name.');
       return;
     }
 
     if (!polygonCoords || polygonCoords.length < 3) {
-      setErrorMsg('Please draw a parcel polygon on the map or click "Load Aurangabad Pilot (1.62 ha)".');
+      setErrorMsg('Please draw a parcel polygon on the map using the draw tool (top-right).');
       return;
     }
 
@@ -315,6 +355,7 @@ export default function PlotDrawMap({ onCompleteSubmit }) {
     const payload = {
       farmerName: farmerName.trim(),
       polygon: geoJsonPolygon,
+      area_hectares: calculatedAreaHa ? parseFloat(calculatedAreaHa) : 1.62,
       documents: hasDocument
         ? [
             {
@@ -332,22 +373,22 @@ export default function PlotDrawMap({ onCompleteSubmit }) {
   };
 
   return (
-    <div className="bg-panel border border-[#1e293b] rounded-md flex flex-col h-full overflow-hidden font-sans">
+    <div className="bg-[#121212] border border-[#262626] rounded-md flex flex-col h-full overflow-hidden font-sans">
       {/* Top Header Bar with PIN Code Search and Controls */}
-      <div className="flex flex-wrap items-center justify-between px-4 py-2.5 bg-[#090d16] border-b border-[#1e293b] gap-2">
+      <div className="flex flex-wrap items-center justify-between px-4 py-2.5 bg-[#18181b] border-b border-[#262626] gap-2">
         {/* Title & Coordinates Info */}
         <div className="flex items-center space-x-2">
-          <Layers className="w-4 h-4 text-[#38bdf8]" />
-          <span className="text-xs font-mono font-semibold uppercase tracking-wider text-slate-200">
+          <Layers className="w-4 h-4 text-[#22c55e]" />
+          <span className="text-xs font-mono font-semibold uppercase tracking-wider text-white">
             Cadastral Parcel Selection
           </span>
           {pincodeInfo ? (
-            <span className="text-[11px] font-mono px-2 py-0.5 rounded-sm bg-[#1e293b] text-[#38bdf8] border border-[#334155] flex items-center space-x-1">
-              <MapPin className="w-3 h-3 text-[#38bdf8]" />
+            <span className="text-[11px] font-mono px-2 py-0.5 rounded-sm bg-[#14532d] text-[#4ade80] border border-[#16a34a] flex items-center space-x-1">
+              <MapPin className="w-3 h-3 text-[#4ade80]" />
               <span className="truncate max-w-[220px]">{pincodeInfo}</span>
             </span>
           ) : (
-            <span className="text-[11px] font-mono px-2 py-0.5 rounded-sm bg-[#1e293b] text-slate-400 border border-[#334155]">
+            <span className="text-[11px] font-mono px-2 py-0.5 rounded-sm bg-[#27272a] text-zinc-300 border border-[#3f3f46]">
               Aurangabad Pilot (19.883°N, 75.343°E)
             </span>
           )}
@@ -364,18 +405,18 @@ export default function PlotDrawMap({ onCompleteSubmit }) {
                 if (pincodeError) setPincodeError('');
               }}
               placeholder="Enter PIN Code (e.g. 431001)"
-              className="h-7 w-48 px-2.5 rounded-sm bg-[#0f172a] border border-[#1e293b] text-slate-100 text-[11px] font-mono placeholder:text-slate-500 focus:outline-none focus:border-[#38bdf8] transition-colors"
+              className="h-7 w-48 px-2.5 rounded-sm bg-[#121212] border border-[#262626] text-white text-[11px] font-mono placeholder:text-zinc-500 focus:outline-none focus:border-[#16a34a] transition-colors"
             />
           </div>
           <button
             type="submit"
             disabled={isGeocoding || !pincodeInput.trim()}
-            className="h-7 px-2.5 rounded-sm bg-[#1e293b] hover:bg-[#334155] disabled:opacity-50 text-slate-200 text-[11px] font-mono font-medium border border-[#334155] flex items-center space-x-1 transition-colors"
+            className="h-7 px-2.5 rounded-sm bg-[#27272a] hover:bg-[#3f3f46] disabled:opacity-50 text-white text-[11px] font-mono font-medium border border-[#3f3f46] flex items-center space-x-1 transition-colors"
           >
             {isGeocoding ? (
-              <Loader2 className="w-3 h-3 animate-spin text-[#38bdf8]" />
+              <Loader2 className="w-3 h-3 animate-spin text-[#4ade80]" />
             ) : (
-              <Search className="w-3 h-3 text-[#38bdf8]" />
+              <Search className="w-3 h-3 text-[#4ade80]" />
             )}
             <span>Locate</span>
           </button>
@@ -383,18 +424,8 @@ export default function PlotDrawMap({ onCompleteSubmit }) {
 
         {/* Action Preset & Tile Switcher */}
         <div className="flex items-center space-x-2">
-          {/* Preset Button */}
-          <button
-            type="button"
-            onClick={handleLoadPilotPreset}
-            className="flex items-center space-x-1.5 text-xs font-mono px-3 py-1 rounded-sm bg-[#38bdf8]/15 hover:bg-[#38bdf8]/25 text-[#38bdf8] border border-[#38bdf8]/40 transition-colors font-semibold shadow-sm"
-          >
-            <Sparkles className="w-3.5 h-3.5" />
-            <span>Load Aurangabad Pilot (1.62 ha)</span>
-          </button>
-
           {/* Tile Layer Selector */}
-          <div className="flex items-center space-x-1 bg-[#0f172a] p-0.5 rounded-sm border border-[#1e293b]">
+          <div className="flex items-center space-x-1 bg-[#121212] p-0.5 rounded-sm border border-[#262626]">
             {['satellite', 'dark', 'osm'].map((layerKey) => (
               <button
                 key={layerKey}
@@ -402,8 +433,8 @@ export default function PlotDrawMap({ onCompleteSubmit }) {
                 onClick={() => setActiveLayer(layerKey)}
                 className={`text-[10px] font-mono px-2 py-0.5 rounded-sm transition-colors uppercase ${
                   activeLayer === layerKey
-                    ? 'bg-[#1e293b] text-[#38bdf8] font-bold'
-                    : 'text-slate-400 hover:text-slate-200'
+                    ? 'bg-[#14532d] text-[#4ade80] border border-[#16a34a] font-bold'
+                    : 'text-zinc-400 hover:text-zinc-200'
                 }`}
               >
                 {layerKey === 'satellite' ? 'Satellite' : layerKey === 'dark' ? 'Dark' : 'OSM'}
@@ -415,14 +446,14 @@ export default function PlotDrawMap({ onCompleteSubmit }) {
 
       {/* Geocoding Error Banner if any */}
       {pincodeError && (
-        <div className="px-4 py-1.5 bg-[#f43f5e]/15 border-b border-[#f43f5e]/30 text-[#f43f5e] text-xs font-mono flex items-center space-x-2">
+        <div className="px-4 py-1.5 bg-[#450a0a] border-b border-[#991b1b] text-red-300 text-xs font-mono flex items-center space-x-2">
           <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
           <span>{pincodeError}</span>
         </div>
       )}
 
       {/* Map View */}
-      <div className="relative flex-1 min-h-[420px] w-full bg-[#0f172a]">
+      <div className="relative flex-1 min-h-[420px] w-full bg-[#09090b]">
         <MapContainer
           center={mapCenter}
           zoom={15}
@@ -442,12 +473,12 @@ export default function PlotDrawMap({ onCompleteSubmit }) {
           {pincodeMarker && (
             <Marker position={pincodeMarker}>
               <Popup>
-                <div className="bg-[#0f172a] text-slate-100 p-2 font-mono text-xs border border-[#1e293b] rounded-sm">
-                  <div className="font-bold text-[#38bdf8] flex items-center gap-1">
+                <div className="bg-[#18181b] text-white p-2 font-mono text-xs border border-[#27272a] rounded-sm">
+                  <div className="font-bold text-[#4ade80] flex items-center gap-1">
                     <MapPin className="w-3.5 h-3.5" /> PIN: {pincodeInput}
                   </div>
-                  <div className="text-slate-300 text-[11px] mt-1">{pincodeInfo}</div>
-                  <div className="text-[10px] text-slate-500 mt-0.5">
+                  <div className="text-zinc-300 text-[11px] mt-1">{pincodeInfo}</div>
+                  <div className="text-[10px] text-zinc-500 mt-0.5">
                     Coordinates: {pincodeMarker[0].toFixed(4)}, {pincodeMarker[1].toFixed(4)}
                   </div>
                 </div>
@@ -463,14 +494,14 @@ export default function PlotDrawMap({ onCompleteSubmit }) {
               onDeleted={handleDeleted}
             />
 
-            {/* Display pilot polygon if preset was loaded */}
-            {polygonCoords && (
+            {/* Display polygon if not already held in drawnItems */}
+            {polygonCoords && (!featureGroupRef.current || featureGroupRef.current.getLayers().length === 0) && (
               <Polygon
                 positions={polygonCoords}
                 pathOptions={{
-                  color: '#10b981',
-                  fillColor: '#10b981',
-                  fillOpacity: 0.4,
+                  color: '#22c55e',
+                  fillColor: '#22c55e',
+                  fillOpacity: 0.35,
                   weight: 2.5,
                 }}
               />
@@ -479,29 +510,29 @@ export default function PlotDrawMap({ onCompleteSubmit }) {
         </MapContainer>
 
         {/* Technical Status Overlay */}
-        <div className="absolute bottom-3 left-3 z-[1000] bg-[#0f172a]/95 border border-[#1e293b] rounded-md p-2.5 text-xs font-mono shadow-lg pointer-events-auto">
-          <div className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-1">
+        <div className="absolute bottom-3 left-3 z-[1000] bg-[#121212] border border-[#262626] rounded-md p-2.5 text-xs font-mono pointer-events-auto">
+          <div className="text-[10px] uppercase tracking-wider text-zinc-400 font-semibold mb-1">
             Parcel Geometry Status
           </div>
           {polygonCoords ? (
-            <div className="flex items-center space-x-2 text-[#10b981]">
+            <div className="flex items-center space-x-2 text-[#4ade80]">
               <CheckCircle2 className="w-3.5 h-3.5" />
-              <span>{polygonCoords.length} Vertices Bound (1.62 Ha verified)</span>
+              <span>{polygonCoords.length} Vertices Bound ({calculatedAreaHa} Ha verified)</span>
             </div>
           ) : (
-            <div className="flex items-center space-x-2 text-slate-300">
-              <span className="w-2 h-2 rounded-full bg-[#f59e0b] animate-pulse"></span>
-              <span>Click "Load Aurangabad Pilot" or use draw tool (top-right)</span>
+            <div className="flex items-center space-x-2 text-zinc-300">
+              <span className="w-2 h-2 rounded-full bg-[#f59e0b]"></span>
+              <span>Use polygon draw tool (top-right) to outline parcel</span>
             </div>
           )}
         </div>
       </div>
 
       {/* Form Inputs & Pipeline Trigger */}
-      <div className="p-3 bg-[#090d16] border-t border-[#1e293b]">
+      <div className="p-3 bg-[#18181b] border-t border-[#262626]">
         <form onSubmit={handleSubmit} className="space-y-3">
           {errorMsg && (
-            <div className="flex items-center space-x-2 px-3 py-1.5 rounded-sm bg-[#f43f5e]/10 border border-[#f43f5e]/30 text-[#f43f5e] text-xs font-mono">
+            <div className="flex items-center space-x-2 px-3 py-1.5 rounded-sm bg-[#450a0a] border border-[#991b1b] text-red-300 text-xs font-mono">
               <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
               <span>{errorMsg}</span>
             </div>
@@ -510,7 +541,7 @@ export default function PlotDrawMap({ onCompleteSubmit }) {
           <div className="grid grid-cols-1 md:grid-cols-12 gap-3 items-end">
             {/* Farmer Name Input */}
             <div className="md:col-span-4">
-              <label className="block text-[11px] font-mono uppercase tracking-wider text-slate-400 mb-1">
+              <label className="block text-[11px] font-mono uppercase tracking-wider text-zinc-400 mb-1">
                 Farmer Full Name
               </label>
               <input
@@ -521,21 +552,21 @@ export default function PlotDrawMap({ onCompleteSubmit }) {
                   if (errorMsg) setErrorMsg('');
                 }}
                 placeholder="e.g. Ramesh G. Patil"
-                className="w-full h-9 px-3 rounded-md bg-[#0f172a] border border-[#1e293b] text-slate-100 text-xs font-mono placeholder:text-slate-600 focus:outline-none focus:border-[#38bdf8] transition-colors"
+                className="w-full h-9 px-3 rounded-md bg-[#121212] border border-[#262626] text-white text-xs font-mono placeholder:text-zinc-500 focus:outline-none focus:border-[#16a34a] transition-colors"
               />
             </div>
 
             {/* Land Title 7/12 OCR Upload Zone */}
             <div className="md:col-span-5">
-              <label className="block text-[11px] font-mono uppercase tracking-wider text-slate-400 mb-1">
+              <label className="block text-[11px] font-mono uppercase tracking-wider text-zinc-400 mb-1">
                 Land Title (7/12 OCR) Document
               </label>
-              <div className="h-9 px-3 rounded-md bg-[#0f172a] border border-[#1e293b] flex items-center justify-between text-xs font-mono">
+              <div className="h-9 px-3 rounded-md bg-[#121212] border border-[#262626] flex items-center justify-between text-xs font-mono">
                 <div className="flex items-center space-x-2 truncate">
-                  <FileCheck className="w-4 h-4 text-[#10b981] flex-shrink-0" />
-                  <span className="text-slate-200 truncate">{documentName}</span>
+                  <FileCheck className="w-4 h-4 text-[#22c55e] flex-shrink-0" />
+                  <span className="text-zinc-200 truncate">{documentName}</span>
                 </div>
-                <span className="flex-shrink-0 ml-2 px-1.5 py-0.5 rounded-sm bg-[#10b981]/15 text-[#10b981] border border-[#10b981]/30 text-[10px] uppercase font-bold">
+                <span className="flex-shrink-0 ml-2 px-1.5 py-0.5 rounded-sm bg-[#14532d] text-[#4ade80] border border-[#16a34a] text-[10px] uppercase font-bold">
                   Ready
                 </span>
               </div>
@@ -545,7 +576,7 @@ export default function PlotDrawMap({ onCompleteSubmit }) {
             <div className="md:col-span-3">
               <button
                 type="submit"
-                className="w-full h-9 px-4 rounded-md bg-[#38bdf8] hover:bg-[#0284c7] text-[#090d16] font-mono text-xs font-bold uppercase tracking-wider flex items-center justify-center space-x-2 transition-colors shadow-sm"
+                className="w-full h-9 px-4 rounded-md bg-[#16a34a] hover:bg-[#15803d] text-white font-mono text-xs font-bold uppercase tracking-wider flex items-center justify-center space-x-2 transition-colors"
               >
                 <span>Trigger CV Pipeline</span>
                 <ArrowRight className="w-4 h-4" />
