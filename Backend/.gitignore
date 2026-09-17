@@ -1,0 +1,31 @@
+# Environment variables
+.env
+.env.local
+
+# Python cache & build
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+dist/
+build/
+*.egg-info/
+
+# Virtual Environments
+.venv/
+venv/
+env/
+
+# App-specific temporary uploads (matches temp_{assessment_id}_{filename} in main.py)
+temp_*
+*.tmp
+
+# IDEs & Editors
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS metadata
+.DS_Store
+Thumbs.db
